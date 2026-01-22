@@ -184,8 +184,9 @@ const Dashboard = ({ objective, selectedColumns, data, calculatedMetrics }: Dash
     // Build primary KPI cards from calculated metrics
     const primaryKPIs: { value: string; label: string }[] = [];
     if (calculatedMetrics) {
-      if (calculatedMetrics.cpa !== null) {
-        primaryKPIs.push({ value: `$${calculatedMetrics.cpa.toFixed(2)}`, label: 'CPA' });
+      // Add all CPA-type metrics
+      for (const cpa of calculatedMetrics.cpaMetrics) {
+        primaryKPIs.push({ value: `$${cpa.value.toFixed(2)}`, label: cpa.label });
       }
       if (calculatedMetrics.leadToSale !== null) {
         primaryKPIs.push({ value: `${calculatedMetrics.leadToSale.toFixed(2)}%`, label: 'Lead to Sale' });
@@ -385,8 +386,15 @@ const Dashboard = ({ objective, selectedColumns, data, calculatedMetrics }: Dash
                     </>
                   ) : calculatedMetrics ? (
                     <>
-                      {calculatedMetrics.cpa !== null && (
-                        <>Achieving a <span className="text-[#0074E5] font-semibold">${calculatedMetrics.cpa.toFixed(2)} CPA</span>. </>
+                      {calculatedMetrics.cpaMetrics.length > 0 && (
+                        <>
+                          {calculatedMetrics.cpaMetrics.map((cpa, index) => (
+                            <span key={index}>
+                              {index > 0 && ' '}
+                              {cpa.label}: <span className="text-[#0074E5] font-semibold">${cpa.value.toFixed(2)}</span>.
+                            </span>
+                          ))}{' '}
+                        </>
                       )}
                       {calculatedMetrics.leadToSale !== null && (
                         <>Lead-to-sale conversion rate: <span className="text-[#0074E5] font-semibold">{calculatedMetrics.leadToSale.toFixed(2)}%</span>. </>

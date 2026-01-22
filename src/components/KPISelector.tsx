@@ -10,8 +10,13 @@ interface KPISelectorProps {
   onComplete: (objective: string, selectedColumns: string[], calculatedMetrics: CalculatedMetrics | null) => void;
 }
 
+export interface CPAMetric {
+  label: string;
+  value: number;
+}
+
 export interface CalculatedMetrics {
-  cpa: number | null;
+  cpaMetrics: CPAMetric[]; // All CPA-type metrics (CPA, Sold CPA, Quoted CPA, etc.)
   leadToSale: number | null;
   leadToQuote: number | null;
   quoteToSale: number | null;
@@ -138,8 +143,51 @@ const calculateMetrics = (data: any[], columns: string[]): CalculatedMetrics => 
     if (soldCol && typeof row[soldCol] === 'number') totalSold += row[soldCol];
   }
 
+  // Find all CPA-type columns (any column with "cpa" in the name)
+  const cpaColumns = columns.filter(col => col.toLowerCase().includes('cpa'));
+  const cpaMetrics: CPAMetric[] = [];
+
+  for (const cpaCol of cpaColumns) {
+    const values = data
+      .map(row => row[cpaCol])
+      .filter(v => typeof v === 'number' && !isNaN(v));
+
+    if (values.length > 0) {
+      // Calculate weighted average if we have leads data, otherwise simple average
+      let avgCPA: number;
+      if (leadsCol) {
+        let weightedSum = 0;
+        let totalWeight = 0;
+        for (const row of data) {
+          const cpaValue = row[cpaCol];
+          const weight = row[leadsCol];
+          if (typeof cpaValue === 'number' && typeof weight === 'number' && weight > 0) {
+            weightedSum += cpaValue * weight;
+            totalWeight += weight;
+          }
+        }
+        avgCPA = totalWeight > 0 ? weightedSum / totalWeight : values.reduce((a, b) => a + b, 0) / values.length;
+      } else {
+        avgCPA = values.reduce((a, b) => a + b, 0) / values.length;
+      }
+
+      cpaMetrics.push({
+        label: getColumnLabel(cpaCol),
+        value: avgCPA,
+      });
+    }
+  }
+
+  // If no CPA columns found but we can calculate CPA from spend/leads, add it
+  if (cpaMetrics.length === 0 && totalLeads > 0 && totalSpend > 0) {
+    cpaMetrics.push({
+      label: 'CPA',
+      value: totalSpend / totalLeads,
+    });
+  }
+
   return {
-    cpa: totalLeads > 0 && totalSpend > 0 ? totalSpend / totalLeads : null,
+    cpaMetrics,
     leadToSale: totalLeads > 0 && totalSold > 0 ? (totalSold / totalLeads) * 100 : null,
     leadToQuote: totalLeads > 0 && totalQuoted > 0 ? (totalQuoted / totalLeads) * 100 : null,
     quoteToSale: totalQuoted > 0 && totalSold > 0 ? (totalSold / totalQuoted) * 100 : null,
@@ -171,7 +219,7 @@ const KPISelector = ({ columns, data, onComplete }: KPISelectorProps) => {
   }, [data, columns]);
 
   // Check if we can calculate metrics
-  const canCalculateMetrics = calculatedMetrics.cpa !== null ||
+  const canCalculateMetrics = calculatedMetrics.cpaMetrics.length > 0 ||
     calculatedMetrics.leadToSale !== null ||
     calculatedMetrics.leadToQuote !== null ||
     calculatedMetrics.quoteToSale !== null;
@@ -247,12 +295,12 @@ const KPISelector = ({ columns, data, onComplete }: KPISelectorProps) => {
                 <span className="text-sm font-semibold text-primary">Calculated Metrics Available</span>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                {calculatedMetrics.cpa !== null && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">CPA:</span>
-                    <span className="font-medium">${calculatedMetrics.cpa.toFixed(2)}</span>
+                {calculatedMetrics.cpaMetrics.map((cpa, index) => (
+                  <div key={index} className="flex justify-between">
+                    <span className="text-muted-foreground">{cpa.label}:</span>
+                    <span className="font-medium">${cpa.value.toFixed(2)}</span>
                   </div>
-                )}
+                ))}
                 {calculatedMetrics.leadToSale !== null && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Lead → Sale:</span>
