@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import GoalLogo from './GoalLogo';
 import KPICard from './KPICard';
 import ComparisonChart from './ComparisonChart';
@@ -12,78 +12,331 @@ interface DashboardProps {
   data: any[];
 }
 
+interface ChartDataItem {
+  name: string;
+  value: number;
+  isHighlighted?: boolean;
+}
+
+interface ComparisonChartData {
+  title: string;
+  subtitle: string;
+  badge: string;
+  data: ChartDataItem[];
+  formatValue?: (v: number) => string;
+}
+
+// Helper to find the "source" or "vendor" column (first string column, or specific known names)
+const findSourceColumn = (data: any[]): string | null => {
+  if (data.length === 0) return null;
+  const firstRow = data[0];
+  const columns = Object.keys(firstRow);
+
+  // Look for common source column names first
+  const sourceNames = ['source', 'vendor', 'provider', 'company', 'name', 'lead_source', 'leadSource'];
+  for (const name of sourceNames) {
+    const found = columns.find(col => col.toLowerCase().replace(/[_\s]/g, '') === name.toLowerCase().replace(/[_\s]/g, ''));
+    if (found) return found;
+  }
+
+  // Fall back to first string column
+  for (const col of columns) {
+    if (typeof firstRow[col] === 'string' && isNaN(parseFloat(firstRow[col]))) {
+      return col;
+    }
+  }
+
+  return columns[0];
+};
+
+// Helper to get numeric columns
+const getNumericColumns = (data: any[]): string[] => {
+  if (data.length === 0) return [];
+  const firstRow = data[0];
+  return Object.keys(firstRow).filter(key => typeof firstRow[key] === 'number');
+};
+
+// Helper to aggregate data by source
+const aggregateBySource = (data: any[], sourceColumn: string): Record<string, Record<string, number>> => {
+  const aggregated: Record<string, Record<string, number>> = {};
+  const counts: Record<string, number> = {};
+
+  for (const row of data) {
+    const source = String(row[sourceColumn] || 'Unknown');
+    if (!aggregated[source]) {
+      aggregated[source] = {};
+      counts[source] = 0;
+    }
+    counts[source]++;
+
+    for (const [key, value] of Object.entries(row)) {
+      if (key !== sourceColumn && typeof value === 'number') {
+        aggregated[source][key] = (aggregated[source][key] || 0) + value;
+      }
+    }
+  }
+
+  // Calculate averages for rate-like columns
+  for (const source of Object.keys(aggregated)) {
+    for (const [key, value] of Object.entries(aggregated[source])) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.includes('rate') || lowerKey.includes('percent') || lowerKey.includes('%')) {
+        aggregated[source][key] = value / counts[source];
+      }
+    }
+  }
+
+  return aggregated;
+};
+
+// Helper to format column name for display
+const formatColumnName = (name: string): string => {
+  return name
+    .replace(/_/g, ' ')
+    .replace(/([A-Z])/g, ' $1')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .trim();
+};
+
+// Helper to format values for display
+const formatValue = (value: number, columnName: string): string => {
+  const lowerName = columnName.toLowerCase();
+
+  if (lowerName.includes('cost') || lowerName.includes('cpa') || lowerName.includes('price') || lowerName.includes('$')) {
+    return `$${value.toFixed(2)}`;
+  }
+  if (lowerName.includes('rate') || lowerName.includes('percent') || lowerName.includes('%') || lowerName.includes('conversion')) {
+    return `${value.toFixed(2)}%`;
+  }
+  if (value >= 1000000) {
+    return `${(value / 1000000).toFixed(1)}M`;
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)}K`;
+  }
+  if (Number.isInteger(value)) {
+    return value.toLocaleString();
+  }
+  return value.toFixed(2);
+};
+
+// Identify "Goal" or primary source for highlighting
+const findPrimarySource = (sources: string[]): string | null => {
+  const goalPatterns = ['goal', 'our', 'us', 'primary', 'main'];
+  for (const source of sources) {
+    const lowerSource = source.toLowerCase();
+    if (goalPatterns.some(pattern => lowerSource.includes(pattern))) {
+      return source;
+    }
+  }
+  return sources[0] || null;
+};
+
+// Calculate comparison badge
+const calculateBadge = (primaryValue: number, otherValues: number[]): string => {
+  if (otherValues.length === 0 || primaryValue === 0) return '';
+  const avgOther = otherValues.reduce((a, b) => a + b, 0) / otherValues.length;
+  if (avgOther === 0) return '';
+
+  const ratio = primaryValue / avgOther;
+  if (ratio >= 1) {
+    return `${ratio.toFixed(1)}x better`;
+  } else {
+    return `${(1 / ratio).toFixed(1)}x behind`;
+  }
+};
+
 const Dashboard = ({ objective, selectedKPIs, data }: DashboardProps) => {
   const dashboardRef = useRef<HTMLDivElement>(null);
   const { isExporting, exportPDF, exportPNG, exportBoth } = useExportPDF(dashboardRef);
 
   const getFilename = () => `goal-report-${new Date().toISOString().split('T')[0]}`;
-  // Generate mock visualization data based on KPIs
-  // In real app, this would process the actual CSV data
-  const kpiData = {
-    cpa: { value: '$21.24', label: 'Cost Per Lead' },
-    lead_to_sale: { value: '2.6%', label: 'Lead → Sale Rate' },
-    lead_to_quote: { value: '24.31%', label: 'Lead → Quote Rate' },
-    quote_to_sale: { value: '10.84%', label: 'Quote → Sale Rate' },
-  };
 
-  const comparisonData = [
-    {
-      title: 'Contact Rate',
-      subtitle: 'Leads successfully contacted',
-      badge: '2.1x better',
-      data: [
-        { name: 'Goal Leads', value: 30.1, isHighlighted: true },
-        { name: 'QuoteWizard', value: 21.7 },
-        { name: 'QuoteNerds', value: 17.9 },
-        { name: 'Smart Financial', value: 15.5 },
-        { name: 'Everquote', value: 2.5 },
-      ],
-    },
-    {
-      title: 'Quote Rate',
-      subtitle: 'Leads that received quotes',
-      badge: '3.0x better',
-      data: [
-        { name: 'Goal Leads', value: 17.5, isHighlighted: true },
-        { name: 'Smart Financial', value: 8.4 },
-        { name: 'QuoteNerds', value: 6.5 },
-        { name: 'QuoteWizard', value: 6.1 },
-        { name: 'Everquote', value: 2.5 },
-      ],
-    },
-    {
-      title: 'Lead → Sale',
-      subtitle: 'Overall conversion rate',
-      badge: '2.5x better',
-      data: [
-        { name: 'Goal Leads', value: 2.6, isHighlighted: true },
-        { name: 'Smart Financial', value: 1.8 },
-        { name: 'QuoteNerds', value: 1.4 },
-        { name: 'Everquote', value: 0.6 },
-        { name: 'QuoteWizard', value: 0.4 },
-      ],
-    },
-    {
-      title: 'Total Sales',
-      subtitle: 'Closed deals',
-      badge: '2.1x better',
-      formatValue: (v: number) => v.toString(),
-      data: [
-        { name: 'QuoteNerds', value: 56 },
-        { name: 'Goal Leads', value: 52, isHighlighted: true },
-        { name: 'Smart Financial', value: 33 },
-        { name: 'Everquote', value: 6 },
-        { name: 'QuoteWizard', value: 2 },
-      ],
-    },
-  ];
+  // Process the uploaded data
+  const processedData = useMemo(() => {
+    if (!data || data.length === 0 || data[0]?.demo) {
+      // Return demo data if no real data
+      return {
+        isDemo: true,
+        kpiCards: [
+          { value: '$21.24', label: 'Cost Per Lead' },
+          { value: '2.6%', label: 'Lead to Sale Rate' },
+          { value: '24.31%', label: 'Lead to Quote Rate' },
+          { value: '10.84%', label: 'Quote to Sale Rate' },
+        ],
+        summaryCards: [
+          { value: '2.1x', label: 'Higher Contact Rate', variant: 'primary' as const },
+          { value: '3.0x', label: 'Higher Quote Rate', variant: 'primary' as const },
+          { value: '2.5x', label: 'Better Conversion', variant: 'primary' as const },
+          { value: '52 vs 97', label: 'Sales (Us vs All 4)', variant: 'default' as const },
+        ],
+        comparisonCharts: [
+          {
+            title: 'Contact Rate',
+            subtitle: 'Leads successfully contacted',
+            badge: '2.1x better',
+            data: [
+              { name: 'Goal Leads', value: 30.1, isHighlighted: true },
+              { name: 'QuoteWizard', value: 21.7 },
+              { name: 'QuoteNerds', value: 17.9 },
+              { name: 'Smart Financial', value: 15.5 },
+              { name: 'Everquote', value: 2.5 },
+            ],
+          },
+          {
+            title: 'Quote Rate',
+            subtitle: 'Leads that received quotes',
+            badge: '3.0x better',
+            data: [
+              { name: 'Goal Leads', value: 17.5, isHighlighted: true },
+              { name: 'Smart Financial', value: 8.4 },
+              { name: 'QuoteNerds', value: 6.5 },
+              { name: 'QuoteWizard', value: 6.1 },
+              { name: 'Everquote', value: 2.5 },
+            ],
+          },
+          {
+            title: 'Lead to Sale',
+            subtitle: 'Overall conversion rate',
+            badge: '2.5x better',
+            data: [
+              { name: 'Goal Leads', value: 2.6, isHighlighted: true },
+              { name: 'Smart Financial', value: 1.8 },
+              { name: 'QuoteNerds', value: 1.4 },
+              { name: 'Everquote', value: 0.6 },
+              { name: 'QuoteWizard', value: 0.4 },
+            ],
+          },
+          {
+            title: 'Total Sales',
+            subtitle: 'Closed deals',
+            badge: '2.1x better',
+            formatValue: (v: number) => v.toString(),
+            data: [
+              { name: 'QuoteNerds', value: 56 },
+              { name: 'Goal Leads', value: 52, isHighlighted: true },
+              { name: 'Smart Financial', value: 33 },
+              { name: 'Everquote', value: 6 },
+              { name: 'QuoteWizard', value: 2 },
+            ],
+          },
+        ],
+        bottomLine: {
+          metric: '2.6%',
+          description: 'lead-to-sale conversion',
+          comparison: '2.8x better',
+          comparisonBase: 'the competitor average of 0.93%',
+        },
+      };
+    }
 
-  const summaryCards = [
-    { value: '2.1x', label: 'Higher Contact Rate', variant: 'primary' as const },
-    { value: '3.0x', label: 'Higher Quote Rate', variant: 'primary' as const },
-    { value: '2.5x', label: 'Better Conversion', variant: 'primary' as const },
-    { value: '52 vs 97', label: 'Sales (Us vs All 4)', variant: 'default' as const },
-  ];
+    // Process real data
+    const sourceColumn = findSourceColumn(data);
+    const numericColumns = getNumericColumns(data);
+
+    if (!sourceColumn || numericColumns.length === 0) {
+      // If we can't find proper structure, show raw data summary
+      const columns = Object.keys(data[0]);
+      const kpiCards = columns.slice(0, 4).map(col => {
+        const values = data.map(row => row[col]).filter(v => typeof v === 'number');
+        const sum = values.reduce((a, b) => a + b, 0);
+        const avg = values.length > 0 ? sum / values.length : 0;
+        return {
+          value: formatValue(avg, col),
+          label: formatColumnName(col),
+        };
+      });
+
+      return {
+        isDemo: false,
+        kpiCards,
+        summaryCards: [],
+        comparisonCharts: [],
+        bottomLine: null,
+      };
+    }
+
+    const aggregated = aggregateBySource(data, sourceColumn);
+    const sources = Object.keys(aggregated);
+    const primarySource = findPrimarySource(sources);
+
+    // Build KPI cards from primary source data
+    const primaryData = primarySource ? aggregated[primarySource] : {};
+    const kpiCards = numericColumns.slice(0, 4).map(col => ({
+      value: formatValue(primaryData[col] || 0, col),
+      label: formatColumnName(col),
+    }));
+
+    // Build comparison charts for each numeric column
+    const comparisonCharts: ComparisonChartData[] = numericColumns.slice(0, 4).map(col => {
+      const chartData: ChartDataItem[] = sources
+        .map(source => ({
+          name: source,
+          value: aggregated[source][col] || 0,
+          isHighlighted: source === primarySource,
+        }))
+        .sort((a, b) => b.value - a.value);
+
+      const primaryValue = primarySource ? (aggregated[primarySource][col] || 0) : 0;
+      const otherValues = sources
+        .filter(s => s !== primarySource)
+        .map(s => aggregated[s][col] || 0);
+
+      return {
+        title: formatColumnName(col),
+        subtitle: `Comparison across sources`,
+        badge: calculateBadge(primaryValue, otherValues),
+        data: chartData,
+      };
+    });
+
+    // Build summary cards
+    const summaryCards = numericColumns.slice(0, 4).map(col => {
+      const primaryValue = primarySource ? (aggregated[primarySource][col] || 0) : 0;
+      const otherValues = sources
+        .filter(s => s !== primarySource)
+        .map(s => aggregated[s][col] || 0);
+      const avgOther = otherValues.length > 0
+        ? otherValues.reduce((a, b) => a + b, 0) / otherValues.length
+        : 0;
+
+      let ratio = avgOther > 0 ? primaryValue / avgOther : 0;
+      const isBetter = ratio >= 1;
+      if (!isBetter && ratio > 0) ratio = 1 / ratio;
+
+      return {
+        value: ratio > 0 ? `${ratio.toFixed(1)}x` : formatValue(primaryValue, col),
+        label: formatColumnName(col),
+        variant: (isBetter ? 'primary' : 'default') as 'primary' | 'default',
+      };
+    });
+
+    // Calculate bottom line from first metric
+    const firstMetric = numericColumns[0];
+    const primaryValue = primarySource ? (aggregated[primarySource][firstMetric] || 0) : 0;
+    const otherValues = sources
+      .filter(s => s !== primarySource)
+      .map(s => aggregated[s][firstMetric] || 0);
+    const avgOther = otherValues.length > 0
+      ? otherValues.reduce((a, b) => a + b, 0) / otherValues.length
+      : 0;
+    const ratio = avgOther > 0 ? primaryValue / avgOther : 0;
+
+    return {
+      isDemo: false,
+      kpiCards,
+      summaryCards,
+      comparisonCharts,
+      bottomLine: {
+        metric: formatValue(primaryValue, firstMetric),
+        description: formatColumnName(firstMetric).toLowerCase(),
+        comparison: ratio > 0 ? `${ratio.toFixed(1)}x better` : '',
+        comparisonBase: `the average of ${formatValue(avgOther, firstMetric)}`,
+      },
+    };
+  }, [data]);
 
   return (
     <div ref={dashboardRef} data-export-container className="min-h-screen bg-background">
@@ -110,89 +363,104 @@ const Dashboard = ({ objective, selectedKPIs, data }: DashboardProps) => {
           <div className="text-center max-w-2xl mx-auto">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-goal-success-light text-goal-success text-sm font-medium mb-4 opacity-0 animate-fade-in">
               <Trophy className="w-4 h-4" />
-              Industry-Leading Performance
+              {processedData.isDemo ? 'Demo Dashboard' : 'Data Analysis Complete'}
             </div>
-            
+
             <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-3 opacity-0 animate-fade-in" style={{ animationDelay: '100ms' }}>
-              {objective || 'Outperforming the Competition'}
+              {objective || 'Performance Analysis'}
             </h1>
-            
+
             <p className="text-muted-foreground opacity-0 animate-fade-in" style={{ animationDelay: '200ms' }}>
-              Comprehensive analysis based on {data.length} data points
+              {processedData.isDemo
+                ? 'Sample data visualization'
+                : `Analysis based on ${data.length} data points`}
             </p>
           </div>
 
           {/* Summary KPI Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 bg-card rounded-2xl p-6 shadow-sm border border-border/50 opacity-0 animate-fade-in" style={{ animationDelay: '300ms' }}>
-            {summaryCards.map((card, index) => (
-              <KPICard 
-                key={card.label}
-                value={card.value}
-                label={card.label}
-                variant={card.variant}
-                delay={400 + index * 100}
-              />
-            ))}
-          </div>
+          {processedData.summaryCards.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 bg-card rounded-2xl p-6 shadow-sm border border-border/50 opacity-0 animate-fade-in" style={{ animationDelay: '300ms' }}>
+              {processedData.summaryCards.map((card, index) => (
+                <KPICard
+                  key={card.label}
+                  value={card.value}
+                  label={card.label}
+                  variant={card.variant}
+                  delay={400 + index * 100}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
-        {/* Selected KPIs */}
-        {selectedKPIs.length > 0 && (
+        {/* KPI Cards */}
+        {processedData.kpiCards.length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            {selectedKPIs.map((kpi, index) => {
-              const kpiInfo = kpiData[kpi as keyof typeof kpiData];
-              if (!kpiInfo) return null;
-              return (
-                <KPICard
-                  key={kpi}
-                  value={kpiInfo.value}
-                  label={kpiInfo.label}
-                  variant="primary"
-                  delay={600 + index * 100}
-                />
-              );
-            })}
+            {processedData.kpiCards.map((kpi, index) => (
+              <KPICard
+                key={kpi.label}
+                value={kpi.value}
+                label={kpi.label}
+                variant="primary"
+                delay={600 + index * 100}
+              />
+            ))}
           </div>
         )}
 
         {/* Comparison Charts */}
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
-          {comparisonData.map((chart, index) => (
-            <ComparisonChart
-              key={chart.title}
-              title={chart.title}
-              subtitle={chart.subtitle}
-              badge={chart.badge}
-              data={chart.data}
-              formatValue={chart.formatValue}
-              delay={800 + index * 150}
-            />
-          ))}
-        </div>
+        {processedData.comparisonCharts.length > 0 && (
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            {processedData.comparisonCharts.map((chart, index) => (
+              <ComparisonChart
+                key={chart.title}
+                title={chart.title}
+                subtitle={chart.subtitle}
+                badge={chart.badge}
+                data={chart.data}
+                formatValue={chart.formatValue}
+                delay={800 + index * 150}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Bottom Line Summary */}
-        <div className="chart-card flex flex-col md:flex-row items-center justify-between gap-6 opacity-0 animate-fade-in" style={{ animationDelay: '1400ms' }}>
-          <div>
-            <h3 className="text-xl font-semibold mb-2">The Bottom Line</h3>
-            <p className="text-muted-foreground">
-              Goal Leads delivers <span className="text-primary font-semibold">2.6% lead-to-sale conversion</span> — 
-              that's <span className="text-goal-success font-semibold">2.8x better</span> than the competitor average of 0.93%
-            </p>
+        {processedData.bottomLine && (
+          <div className="chart-card flex flex-col md:flex-row items-center justify-between gap-6 opacity-0 animate-fade-in" style={{ animationDelay: '1400ms' }}>
+            <div>
+              <h3 className="text-xl font-semibold mb-2">The Bottom Line</h3>
+              <p className="text-muted-foreground">
+                {processedData.isDemo ? (
+                  <>
+                    Goal Leads delivers <span className="text-primary font-semibold">2.6% lead-to-sale conversion</span> —
+                    that's <span className="text-goal-success font-semibold">2.8x better</span> than the competitor average of 0.93%
+                  </>
+                ) : (
+                  <>
+                    Primary source achieves <span className="text-primary font-semibold">{processedData.bottomLine.metric} {processedData.bottomLine.description}</span>
+                    {processedData.bottomLine.comparison && (
+                      <> — that's <span className="text-goal-success font-semibold">{processedData.bottomLine.comparison}</span> than {processedData.bottomLine.comparisonBase}</>
+                    )}
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="flex-shrink-0 text-center kpi-card">
+              <p className="text-3xl font-bold text-primary">{processedData.bottomLine.metric}</p>
+              <p className="text-xs text-primary uppercase tracking-wide font-semibold mt-1">Top Performer</p>
+            </div>
           </div>
-          <div className="flex-shrink-0 text-center kpi-card">
-            <p className="text-3xl font-bold text-primary">2.6%</p>
-            <p className="text-xs text-primary uppercase tracking-wide font-semibold mt-1">Best Conversion</p>
-          </div>
-        </div>
+        )}
       </main>
 
       {/* Footer */}
       <footer className="border-t border-border/50 py-6">
         <div className="container mx-auto px-6 text-center text-sm text-muted-foreground">
-          <p>Generated by GOAL Data Visualizer • Powered by accurate data insights</p>
+          <p>Generated by GOAL Data Visualizer • Powered by your data</p>
         </div>
       </footer>
     </div>
