@@ -26,14 +26,86 @@ interface ComparisonChartData {
   formatValue?: (v: number) => string;
 }
 
+// Column label mappings for known columns
+const COLUMN_LABELS: Record<string, string> = {
+  'status': 'Status',
+  'name': 'Name',
+  'spend': 'Spend',
+  'cpa': 'CPA',
+  'lead-to-sale': 'Lead to Sale',
+  'lead-to-quote': 'Lead to Quote',
+  'quote-to-sale': 'Quote to Sale',
+  'cpc': 'CPC',
+  'daily limit': 'Daily Limit',
+  'dailylimit': 'Daily Limit',
+  'opportunities': 'Opportunities',
+  'target rate': 'Target Rate',
+  'targetrate': 'Target Rate',
+  'bids': 'Bids',
+  'bid rate': 'Bid Rate',
+  'bidrate': 'Bid Rate',
+  'impressions': 'Impressions',
+  'clicks': 'Clicks',
+  'leads': 'Leads',
+  'calls': 'Calls',
+  'quoted': 'Quoted',
+  'sold': 'Sold',
+  'sold cpa': 'Sold CPA',
+  'soldcpa': 'Sold CPA',
+  'sold rev': 'Sold Revenue',
+  'soldrev': 'Sold Revenue',
+  'sold cvr': 'Sold CVR',
+  'soldcvr': 'Sold CVR',
+  'quoted cpa': 'Quoted CPA',
+  'quotedcpa': 'Quoted CPA',
+  'quoted cvr': 'Quoted CVR',
+  'quotedcvr': 'Quoted CVR',
+  'ctr': 'CTR',
+  'win rate': 'Win Rate',
+  'winrate': 'Win Rate',
+};
+
+// Columns that should be formatted as currency
+const CURRENCY_COLUMNS = ['spend', 'cpa', 'cpc', 'sold cpa', 'soldcpa', 'sold rev', 'soldrev', 'quoted cpa', 'quotedcpa'];
+
+// Columns that should be formatted as percentages
+const PERCENTAGE_COLUMNS = [
+  'lead-to-sale', 'lead-to-quote', 'quote-to-sale',
+  'target rate', 'targetrate', 'bid rate', 'bidrate',
+  'sold cvr', 'soldcvr', 'quoted cvr', 'quotedcvr',
+  'ctr', 'win rate', 'winrate'
+];
+
+// Helper to check if column is a currency column
+const isCurrencyColumn = (columnName: string): boolean => {
+  const normalized = columnName.toLowerCase().replace(/[-_\s]/g, '');
+  const normalizedWithSpaces = columnName.toLowerCase().trim();
+  return CURRENCY_COLUMNS.some(col =>
+    col.replace(/[-_\s]/g, '') === normalized || col === normalizedWithSpaces
+  ) || normalizedWithSpaces.includes('spend') || normalizedWithSpaces.includes('rev');
+};
+
+// Helper to check if column is a percentage column
+const isPercentageColumn = (columnName: string): boolean => {
+  const normalized = columnName.toLowerCase().replace(/[-_\s]/g, '');
+  const normalizedWithSpaces = columnName.toLowerCase().trim();
+  return PERCENTAGE_COLUMNS.some(col =>
+    col.replace(/[-_\s]/g, '') === normalized || col === normalizedWithSpaces
+  ) || normalizedWithSpaces.includes('rate') || normalizedWithSpaces.includes('cvr') || normalizedWithSpaces.includes('ctr');
+};
+
 // Helper to find the "source" or "vendor" column (first string column, or specific known names)
 const findSourceColumn = (data: any[]): string | null => {
   if (data.length === 0) return null;
   const firstRow = data[0];
   const columns = Object.keys(firstRow);
 
-  // Look for common source column names first
-  const sourceNames = ['source', 'vendor', 'provider', 'company', 'name', 'lead_source', 'leadSource'];
+  // Look for "Name" column first (primary identifier in GOAL data)
+  const nameCol = columns.find(col => col.toLowerCase() === 'name');
+  if (nameCol) return nameCol;
+
+  // Look for other common source column names
+  const sourceNames = ['source', 'vendor', 'provider', 'company', 'lead_source', 'leadSource'];
   for (const name of sourceNames) {
     const found = columns.find(col => col.toLowerCase().replace(/[_\s]/g, '') === name.toLowerCase().replace(/[_\s]/g, ''));
     if (found) return found;
@@ -76,11 +148,10 @@ const aggregateBySource = (data: any[], sourceColumn: string): Record<string, Re
     }
   }
 
-  // Calculate averages for rate-like columns
+  // Calculate averages for rate/percentage columns (they should be averaged, not summed)
   for (const source of Object.keys(aggregated)) {
     for (const [key, value] of Object.entries(aggregated[source])) {
-      const lowerKey = key.toLowerCase();
-      if (lowerKey.includes('rate') || lowerKey.includes('percent') || lowerKey.includes('%')) {
+      if (isPercentageColumn(key)) {
         aggregated[source][key] = value / counts[source];
       }
     }
@@ -91,8 +162,22 @@ const aggregateBySource = (data: any[], sourceColumn: string): Record<string, Re
 
 // Helper to format column name for display
 const formatColumnName = (name: string): string => {
+  // Check for known column label first
+  const normalizedName = name.toLowerCase().trim();
+  if (COLUMN_LABELS[normalizedName]) {
+    return COLUMN_LABELS[normalizedName];
+  }
+
+  // Also check without spaces/dashes
+  const noSpaces = normalizedName.replace(/[-_\s]/g, '');
+  if (COLUMN_LABELS[noSpaces]) {
+    return COLUMN_LABELS[noSpaces];
+  }
+
+  // Fall back to generic formatting
   return name
     .replace(/_/g, ' ')
+    .replace(/-/g, ' ')
     .replace(/([A-Z])/g, ' $1')
     .split(' ')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
@@ -102,23 +187,35 @@ const formatColumnName = (name: string): string => {
 
 // Helper to format values for display
 const formatValue = (value: number, columnName: string): string => {
-  const lowerName = columnName.toLowerCase();
-
-  if (lowerName.includes('cost') || lowerName.includes('cpa') || lowerName.includes('price') || lowerName.includes('$')) {
+  // Check for known currency columns
+  if (isCurrencyColumn(columnName)) {
+    if (value >= 1000000) {
+      return `$${(value / 1000000).toFixed(2)}M`;
+    }
+    if (value >= 1000) {
+      return `$${(value / 1000).toFixed(2)}K`;
+    }
     return `$${value.toFixed(2)}`;
   }
-  if (lowerName.includes('rate') || lowerName.includes('percent') || lowerName.includes('%') || lowerName.includes('conversion')) {
+
+  // Check for known percentage columns
+  if (isPercentageColumn(columnName)) {
     return `${value.toFixed(2)}%`;
   }
+
+  // Large numbers
   if (value >= 1000000) {
     return `${(value / 1000000).toFixed(1)}M`;
   }
   if (value >= 1000) {
     return `${(value / 1000).toFixed(1)}K`;
   }
+
+  // Integers
   if (Number.isInteger(value)) {
     return value.toLocaleString();
   }
+
   return value.toFixed(2);
 };
 
