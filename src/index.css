@@ -163,11 +163,12 @@
   }
 
   .comparison-bar-primary {
-    background-color: hsl(var(--goal-blue));
+    background-color: #0074E5;
   }
 
   .comparison-bar-secondary {
-    background-color: hsl(var(--goal-gray));
+    background-color: #0074E5;
+    opacity: 0.6;
   }
 
   /* Header gradient */

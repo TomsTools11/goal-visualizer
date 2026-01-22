@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import GoalLogo from '@/components/GoalLogo';
 import FileUpload from '@/components/FileUpload';
-import KPISelector from '@/components/KPISelector';
+import KPISelector, { CalculatedMetrics } from '@/components/KPISelector';
 import Dashboard from '@/components/Dashboard';
 
 type AppState = 'upload' | 'configure' | 'dashboard';
@@ -12,6 +12,7 @@ const Index = () => {
   const [fileName, setFileName] = useState('');
   const [objective, setObjective] = useState('');
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
+  const [calculatedMetrics, setCalculatedMetrics] = useState<CalculatedMetrics | null>(null);
 
   const handleFileUpload = (data: any[], name: string) => {
     setCsvData(data);
@@ -19,9 +20,10 @@ const Index = () => {
     setState('configure');
   };
 
-  const handleColumnSelection = (obj: string, columns: string[]) => {
+  const handleColumnSelection = (obj: string, columns: string[], metrics: CalculatedMetrics | null) => {
     setObjective(obj);
     setSelectedColumns(columns);
+    setCalculatedMetrics(metrics);
     setState('dashboard');
   };
 
@@ -31,12 +33,18 @@ const Index = () => {
     setFileName('');
     setObjective('');
     setSelectedColumns([]);
+    setCalculatedMetrics(null);
   };
 
   if (state === 'dashboard') {
     return (
       <div>
-        <Dashboard objective={objective} selectedColumns={selectedColumns} data={csvData} />
+        <Dashboard
+          objective={objective}
+          selectedColumns={selectedColumns}
+          data={csvData}
+          calculatedMetrics={calculatedMetrics}
+        />
         <div className="fixed bottom-6 right-6">
           <button
             onClick={handleReset}
@@ -55,6 +63,16 @@ const Index = () => {
     setCsvData([{ demo: true }]);
     setObjective('Sample Dashboard');
     setSelectedColumns(['cpa', 'lead_to_sale', 'lead_to_quote', 'quote_to_sale']);
+    setCalculatedMetrics({
+      cpa: 21.24,
+      leadToSale: 2.6,
+      leadToQuote: 24.31,
+      quoteToSale: 10.84,
+      totalSpend: 42480,
+      totalLeads: 2000,
+      totalQuoted: 486,
+      totalSold: 52,
+    });
     setState('dashboard');
   };
 
@@ -90,9 +108,9 @@ const Index = () => {
               </div>
               <span className="font-medium hidden sm:inline">Upload</span>
             </div>
-            
+
             <div className="w-12 h-px bg-border" />
-            
+
             <div className={`flex items-center gap-2 ${state === 'configure' ? 'text-primary' : 'text-muted-foreground'}`}>
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
                 state === 'configure' ? 'bg-primary text-primary-foreground' : 'bg-muted'
@@ -101,9 +119,9 @@ const Index = () => {
               </div>
               <span className="font-medium hidden sm:inline">Configure</span>
             </div>
-            
+
             <div className="w-12 h-px bg-border" />
-            
+
             <div className="flex items-center gap-2 text-muted-foreground">
               <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-semibold">
                 3

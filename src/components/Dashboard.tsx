@@ -3,13 +3,15 @@ import GoalLogo from './GoalLogo';
 import KPICard from './KPICard';
 import ComparisonChart from './ComparisonChart';
 import ExportButton from './ExportButton';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, TrendingUp } from 'lucide-react';
 import { useExportPDF } from '@/hooks/useExportPDF';
+import { CalculatedMetrics } from './KPISelector';
 
 interface DashboardProps {
   objective: string;
   selectedColumns: string[];
   data: any[];
+  calculatedMetrics: CalculatedMetrics | null;
 }
 
 // Column label mappings for known columns
@@ -135,14 +137,13 @@ const findNameColumn = (data: any[]): string | null => {
   const columns = Object.keys(data[0]);
   const nameCol = columns.find(col => col.toLowerCase() === 'name');
   if (nameCol) return nameCol;
-  // Fall back to first string column
   for (const col of columns) {
     if (typeof data[0][col] === 'string') return col;
   }
   return null;
 };
 
-const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
+const Dashboard = ({ objective, selectedColumns, data, calculatedMetrics }: DashboardProps) => {
   const dashboardRef = useRef<HTMLDivElement>(null);
   const { isExporting, exportPDF, exportPNG, exportBoth } = useExportPDF(dashboardRef);
 
@@ -155,17 +156,19 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
     if (isDemo) {
       return {
         isDemo: true,
-        summaryCards: [
+        primaryKPIs: [
           { value: '$21.24', label: 'CPA' },
-          { value: '2.6%', label: 'Lead to Sale' },
+          { value: '2.60%', label: 'Lead to Sale' },
           { value: '24.31%', label: 'Lead to Quote' },
           { value: '10.84%', label: 'Quote to Sale' },
         ],
-        dataRows: [
-          { name: 'Goal Leads', values: { 'CPA': '$21.24', 'Lead to Sale': '2.6%', 'Lead to Quote': '24.31%', 'Quote to Sale': '10.84%' } },
-          { name: 'QuoteWizard', values: { 'CPA': '$35.50', 'Lead to Sale': '0.4%', 'Lead to Quote': '6.1%', 'Quote to Sale': '6.56%' } },
-          { name: 'QuoteNerds', values: { 'CPA': '$28.00', 'Lead to Sale': '1.4%', 'Lead to Quote': '6.5%', 'Quote to Sale': '21.54%' } },
+        summaryStats: [
+          { value: '$42.5K', label: 'Total Spend' },
+          { value: '2,000', label: 'Total Leads' },
+          { value: '486', label: 'Total Quoted' },
+          { value: '52', label: 'Total Sold' },
         ],
+        dataRows: [],
         charts: [],
       };
     }
@@ -178,21 +181,52 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
       return typeof sampleValue === 'number';
     });
 
-    // Calculate totals/averages for summary cards (show first 4 numeric columns)
-    const summaryCards = numericColumns.slice(0, 4).map(col => {
-      const values = data.map(row => row[col]).filter(v => typeof v === 'number');
-      const total = values.reduce((a, b) => a + b, 0);
+    // Build primary KPI cards from calculated metrics
+    const primaryKPIs: { value: string; label: string }[] = [];
+    if (calculatedMetrics) {
+      if (calculatedMetrics.cpa !== null) {
+        primaryKPIs.push({ value: `$${calculatedMetrics.cpa.toFixed(2)}`, label: 'CPA' });
+      }
+      if (calculatedMetrics.leadToSale !== null) {
+        primaryKPIs.push({ value: `${calculatedMetrics.leadToSale.toFixed(2)}%`, label: 'Lead to Sale' });
+      }
+      if (calculatedMetrics.leadToQuote !== null) {
+        primaryKPIs.push({ value: `${calculatedMetrics.leadToQuote.toFixed(2)}%`, label: 'Lead to Quote' });
+      }
+      if (calculatedMetrics.quoteToSale !== null) {
+        primaryKPIs.push({ value: `${calculatedMetrics.quoteToSale.toFixed(2)}%`, label: 'Quote to Sale' });
+      }
+    }
 
-      // For rates/percentages, show average; for counts/currency, show total
-      const displayValue = isPercentageColumn(col)
-        ? total / values.length
-        : total;
+    // If no calculated metrics, use first 4 numeric columns
+    if (primaryKPIs.length === 0) {
+      numericColumns.slice(0, 4).forEach(col => {
+        const values = data.map(row => row[col]).filter(v => typeof v === 'number');
+        const total = values.reduce((a, b) => a + b, 0);
+        const displayValue = isPercentageColumn(col) ? total / values.length : total;
+        primaryKPIs.push({
+          value: formatValue(displayValue, col),
+          label: formatColumnName(col),
+        });
+      });
+    }
 
-      return {
-        value: formatValue(displayValue, col),
-        label: formatColumnName(col),
-      };
-    });
+    // Build summary stats from totals
+    const summaryStats: { value: string; label: string }[] = [];
+    if (calculatedMetrics) {
+      if (calculatedMetrics.totalSpend !== null) {
+        summaryStats.push({ value: formatValue(calculatedMetrics.totalSpend, 'spend'), label: 'Total Spend' });
+      }
+      if (calculatedMetrics.totalLeads !== null) {
+        summaryStats.push({ value: calculatedMetrics.totalLeads.toLocaleString(), label: 'Total Leads' });
+      }
+      if (calculatedMetrics.totalQuoted !== null) {
+        summaryStats.push({ value: calculatedMetrics.totalQuoted.toLocaleString(), label: 'Total Quoted' });
+      }
+      if (calculatedMetrics.totalSold !== null) {
+        summaryStats.push({ value: calculatedMetrics.totalSold.toLocaleString(), label: 'Total Sold' });
+      }
+    }
 
     // Build data rows for display
     const dataRows = data.map(row => {
@@ -211,8 +245,8 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
       return { name, values };
     });
 
-    // Build bar charts for numeric columns (one chart per column showing all rows)
-    const charts = numericColumns.slice(0, 6).map(col => {
+    // Build bar charts for numeric columns (2x2 grid)
+    const charts = numericColumns.slice(0, 4).map(col => {
       const chartData = data.map(row => ({
         name: nameColumn ? String(row[nameColumn]) : 'Data',
         value: typeof row[col] === 'number' ? row[col] : 0,
@@ -220,7 +254,7 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
 
       return {
         title: formatColumnName(col),
-        subtitle: `Values by ${nameColumn ? formatColumnName(nameColumn) : 'row'}`,
+        subtitle: `By ${nameColumn ? formatColumnName(nameColumn) : 'row'}`,
         data: chartData,
         formatValue: isPercentageColumn(col)
           ? (v: number) => `${v.toFixed(2)}%`
@@ -232,11 +266,12 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
 
     return {
       isDemo: false,
-      summaryCards,
+      primaryKPIs,
+      summaryStats,
       dataRows,
       charts,
     };
-  }, [data, selectedColumns]);
+  }, [data, selectedColumns, calculatedMetrics]);
 
   return (
     <div ref={dashboardRef} data-export-container className="min-h-screen bg-background">
@@ -261,42 +296,59 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
       <section className="header-gradient pb-8">
         <div className="container mx-auto px-6 pt-8">
           <div className="text-center max-w-2xl mx-auto">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-goal-success-light text-goal-success text-sm font-medium mb-4 opacity-0 animate-fade-in">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#0074E5]/10 text-[#0074E5] text-sm font-medium mb-4 opacity-0 animate-fade-in">
               <BarChart3 className="w-4 h-4" />
-              {processedData.isDemo ? 'Demo Dashboard' : 'Data Visualization'}
+              {processedData.isDemo ? 'Demo Dashboard' : 'KPI Dashboard'}
             </div>
 
             <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-3 opacity-0 animate-fade-in" style={{ animationDelay: '100ms' }}>
-              {objective || 'Data Visualization'}
+              {objective || 'Performance Dashboard'}
             </h1>
 
             <p className="text-muted-foreground opacity-0 animate-fade-in" style={{ animationDelay: '200ms' }}>
               {processedData.isDemo
                 ? 'Sample data visualization'
-                : `Showing ${data.length} rows, ${selectedColumns.length} columns`}
+                : `Analyzing ${data.length} data points`}
             </p>
           </div>
-
-          {/* Summary KPI Cards - showing actual totals/averages */}
-          {processedData.summaryCards.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 bg-card rounded-2xl p-6 shadow-sm border border-border/50 opacity-0 animate-fade-in" style={{ animationDelay: '300ms' }}>
-              {processedData.summaryCards.map((card, index) => (
-                <KPICard
-                  key={card.label}
-                  value={card.value}
-                  label={card.label}
-                  variant="primary"
-                  delay={400 + index * 100}
-                />
-              ))}
-            </div>
-          )}
         </div>
       </section>
 
-      {/* Main Content */}
+      {/* Main Content - KPI Dashboard Layout */}
       <main className="container mx-auto px-6 py-8">
-        {/* Data Charts */}
+        {/* Top Row: 4 Large KPI Cards (Primary Metrics) */}
+        {processedData.primaryKPIs.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            {processedData.primaryKPIs.map((kpi, index) => (
+              <div
+                key={kpi.label}
+                className="bg-card rounded-2xl p-6 shadow-sm border border-border/50 text-center opacity-0 animate-fade-in"
+                style={{ animationDelay: `${300 + index * 100}ms` }}
+              >
+                <p className="text-3xl md:text-4xl font-bold text-[#0074E5] mb-2">{kpi.value}</p>
+                <p className="text-sm text-muted-foreground font-medium uppercase tracking-wide">{kpi.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Summary Stats Row */}
+        {processedData.summaryStats.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            {processedData.summaryStats.map((stat, index) => (
+              <div
+                key={stat.label}
+                className="bg-muted/30 rounded-xl p-4 text-center opacity-0 animate-fade-in"
+                style={{ animationDelay: `${500 + index * 100}ms` }}
+              >
+                <p className="text-xl font-semibold text-foreground mb-1">{stat.value}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">{stat.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Middle: 2x2 Grid of Horizontal Bar Charts */}
         {processedData.charts.length > 0 && (
           <div className="grid md:grid-cols-2 gap-6 mb-8">
             {processedData.charts.map((chart, index) => (
@@ -306,16 +358,58 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
                 subtitle={chart.subtitle}
                 data={chart.data}
                 formatValue={chart.formatValue}
-                delay={600 + index * 150}
+                delay={700 + index * 150}
               />
             ))}
           </div>
         )}
 
+        {/* Bottom: Summary Callout */}
+        {(calculatedMetrics || processedData.isDemo) && (
+          <div
+            className="bg-gradient-to-r from-[#0074E5]/5 to-[#0074E5]/10 border border-[#0074E5]/20 rounded-2xl p-6 md:p-8 opacity-0 animate-fade-in"
+            style={{ animationDelay: '1200ms' }}
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-[#0074E5]/10 flex items-center justify-center flex-shrink-0">
+                <TrendingUp className="w-6 h-6 text-[#0074E5]" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold mb-2">Performance Summary</h3>
+                <p className="text-muted-foreground">
+                  {processedData.isDemo ? (
+                    <>
+                      With a <span className="text-[#0074E5] font-semibold">$21.24 CPA</span> and{' '}
+                      <span className="text-[#0074E5] font-semibold">2.6% lead-to-sale conversion</span>,
+                      this campaign demonstrates strong acquisition efficiency.
+                      Out of {calculatedMetrics?.totalLeads?.toLocaleString() || '2,000'} leads,{' '}
+                      {calculatedMetrics?.totalSold || 52} converted to sales.
+                    </>
+                  ) : calculatedMetrics ? (
+                    <>
+                      {calculatedMetrics.cpa !== null && (
+                        <>Achieving a <span className="text-[#0074E5] font-semibold">${calculatedMetrics.cpa.toFixed(2)} CPA</span>. </>
+                      )}
+                      {calculatedMetrics.leadToSale !== null && (
+                        <>Lead-to-sale conversion rate: <span className="text-[#0074E5] font-semibold">{calculatedMetrics.leadToSale.toFixed(2)}%</span>. </>
+                      )}
+                      {calculatedMetrics.totalLeads !== null && calculatedMetrics.totalSold !== null && (
+                        <>From {calculatedMetrics.totalLeads.toLocaleString()} leads, {calculatedMetrics.totalSold.toLocaleString()} converted to sales.</>
+                      )}
+                    </>
+                  ) : (
+                    <>Data analysis complete. Review the metrics above for detailed insights.</>
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Data Table */}
         {processedData.dataRows.length > 0 && !processedData.isDemo && (
-          <div className="chart-card overflow-hidden opacity-0 animate-fade-in" style={{ animationDelay: '1200ms' }}>
-            <h3 className="text-lg font-semibold mb-4">Data Details</h3>
+          <div className="chart-card overflow-hidden mt-8 opacity-0 animate-fade-in" style={{ animationDelay: '1400ms' }}>
+            <h3 className="text-lg font-semibold mb-4">Detailed Data</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -349,7 +443,7 @@ const Dashboard = ({ objective, selectedColumns, data }: DashboardProps) => {
       {/* Footer */}
       <footer className="border-t border-border/50 py-6">
         <div className="container mx-auto px-6 text-center text-sm text-muted-foreground">
-          <p>Generated by GOAL Data Visualizer • Powered by your data</p>
+          <p>Generated by GOAL Data Visualizer</p>
         </div>
       </footer>
     </div>

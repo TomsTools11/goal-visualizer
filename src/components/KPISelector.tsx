@@ -2,12 +2,23 @@ import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ArrowRight, Target, BarChart3, Check } from 'lucide-react';
+import { ArrowRight, Target, BarChart3, Check, Calculator } from 'lucide-react';
 
 interface KPISelectorProps {
   columns: string[];
   data: any[];
-  onComplete: (objective: string, selectedColumns: string[]) => void;
+  onComplete: (objective: string, selectedColumns: string[], calculatedMetrics: CalculatedMetrics | null) => void;
+}
+
+export interface CalculatedMetrics {
+  cpa: number | null;
+  leadToSale: number | null;
+  leadToQuote: number | null;
+  quoteToSale: number | null;
+  totalSpend: number | null;
+  totalLeads: number | null;
+  totalQuoted: number | null;
+  totalSold: number | null;
 }
 
 // Column label mappings for known columns
@@ -59,7 +70,6 @@ const getColumnLabel = (column: string): string => {
   if (COLUMN_LABELS[noSpaces]) {
     return COLUMN_LABELS[noSpaces];
   }
-  // Fall back to title case
   return column
     .replace(/_/g, ' ')
     .replace(/-/g, ' ')
@@ -69,9 +79,18 @@ const getColumnLabel = (column: string): string => {
 };
 
 // Detect column type from data
-const detectColumnType = (data: any[], column: string): 'numeric' | 'text' | 'mixed' => {
+const detectColumnType = (data: any[], column: string): 'numeric' | 'text' | 'date' | 'mixed' => {
   const values = data.map(row => row[column]).filter(v => v !== null && v !== undefined && v !== '');
   if (values.length === 0) return 'text';
+
+  // Check for date patterns
+  const dateCount = values.filter(v => {
+    if (typeof v === 'string') {
+      return !isNaN(Date.parse(v)) && v.match(/\d{1,4}[-/]\d{1,2}[-/]\d{1,4}/);
+    }
+    return false;
+  }).length;
+  if (dateCount > values.length * 0.8) return 'date';
 
   const numericCount = values.filter(v => typeof v === 'number').length;
   if (numericCount === values.length) return 'numeric';
@@ -83,12 +102,52 @@ const detectColumnType = (data: any[], column: string): 'numeric' | 'text' | 'mi
 const getSampleValue = (data: any[], column: string): string => {
   const values = data.map(row => row[column]).filter(v => v !== null && v !== undefined && v !== '');
   if (values.length === 0) return 'No data';
-
-  // For numeric columns, show a sample value
   if (typeof values[0] === 'number') {
     return values[0].toLocaleString();
   }
   return String(values[0]);
+};
+
+// Find column by possible names
+const findColumn = (columns: string[], possibleNames: string[]): string | null => {
+  for (const name of possibleNames) {
+    const found = columns.find(col =>
+      col.toLowerCase().replace(/[-_\s]/g, '') === name.toLowerCase().replace(/[-_\s]/g, '')
+    );
+    if (found) return found;
+  }
+  return null;
+};
+
+// Calculate derived metrics from raw data
+const calculateMetrics = (data: any[], columns: string[]): CalculatedMetrics => {
+  const spendCol = findColumn(columns, ['spend', 'cost', 'total spend', 'totalspend']);
+  const leadsCol = findColumn(columns, ['leads', 'lead count', 'leadcount', 'total leads']);
+  const quotedCol = findColumn(columns, ['quoted', 'quotes', 'quote count', 'quotecount']);
+  const soldCol = findColumn(columns, ['sold', 'sales', 'sale count', 'salecount', 'conversions']);
+
+  let totalSpend = 0;
+  let totalLeads = 0;
+  let totalQuoted = 0;
+  let totalSold = 0;
+
+  for (const row of data) {
+    if (spendCol && typeof row[spendCol] === 'number') totalSpend += row[spendCol];
+    if (leadsCol && typeof row[leadsCol] === 'number') totalLeads += row[leadsCol];
+    if (quotedCol && typeof row[quotedCol] === 'number') totalQuoted += row[quotedCol];
+    if (soldCol && typeof row[soldCol] === 'number') totalSold += row[soldCol];
+  }
+
+  return {
+    cpa: totalLeads > 0 && totalSpend > 0 ? totalSpend / totalLeads : null,
+    leadToSale: totalLeads > 0 && totalSold > 0 ? (totalSold / totalLeads) * 100 : null,
+    leadToQuote: totalLeads > 0 && totalQuoted > 0 ? (totalQuoted / totalLeads) * 100 : null,
+    quoteToSale: totalQuoted > 0 && totalSold > 0 ? (totalSold / totalQuoted) * 100 : null,
+    totalSpend: totalSpend > 0 ? totalSpend : null,
+    totalLeads: totalLeads > 0 ? totalLeads : null,
+    totalQuoted: totalQuoted > 0 ? totalQuoted : null,
+    totalSold: totalSold > 0 ? totalSold : null,
+  };
 };
 
 const KPISelector = ({ columns, data, onComplete }: KPISelectorProps) => {
@@ -106,9 +165,21 @@ const KPISelector = ({ columns, data, onComplete }: KPISelectorProps) => {
     }));
   }, [columns, data]);
 
-  // Separate numeric and text columns
+  // Calculate derived metrics
+  const calculatedMetrics = useMemo(() => {
+    return calculateMetrics(data, columns);
+  }, [data, columns]);
+
+  // Check if we can calculate metrics
+  const canCalculateMetrics = calculatedMetrics.cpa !== null ||
+    calculatedMetrics.leadToSale !== null ||
+    calculatedMetrics.leadToQuote !== null ||
+    calculatedMetrics.quoteToSale !== null;
+
+  // Separate columns by type
   const numericColumns = columnInfo.filter(c => c.type === 'numeric');
   const textColumns = columnInfo.filter(c => c.type === 'text' || c.type === 'mixed');
+  const dateColumns = columnInfo.filter(c => c.type === 'date');
 
   const handleColumnToggle = (columnName: string) => {
     setSelectedColumns(prev =>
@@ -130,7 +201,11 @@ const KPISelector = ({ columns, data, onComplete }: KPISelectorProps) => {
   };
 
   const handleComplete = () => {
-    onComplete(objective || 'Data Visualization', selectedColumns);
+    onComplete(
+      objective || 'Data Visualization',
+      selectedColumns,
+      canCalculateMetrics ? calculatedMetrics : null
+    );
   };
 
   return (
@@ -159,10 +234,46 @@ const KPISelector = ({ columns, data, onComplete }: KPISelectorProps) => {
               <strong className="text-foreground">Detected {columns.length} columns</strong> from your uploaded data
               <br />
               <span className="text-xs">
-                {numericColumns.length} numeric, {textColumns.length} text
+                {numericColumns.length} numeric, {textColumns.length} text{dateColumns.length > 0 && `, ${dateColumns.length} date`}
               </span>
             </p>
           </div>
+
+          {/* Calculated Metrics Preview */}
+          {canCalculateMetrics && (
+            <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Calculator className="w-4 h-4 text-primary" />
+                <span className="text-sm font-semibold text-primary">Calculated Metrics Available</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                {calculatedMetrics.cpa !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">CPA:</span>
+                    <span className="font-medium">${calculatedMetrics.cpa.toFixed(2)}</span>
+                  </div>
+                )}
+                {calculatedMetrics.leadToSale !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Lead → Sale:</span>
+                    <span className="font-medium">{calculatedMetrics.leadToSale.toFixed(2)}%</span>
+                  </div>
+                )}
+                {calculatedMetrics.leadToQuote !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Lead → Quote:</span>
+                    <span className="font-medium">{calculatedMetrics.leadToQuote.toFixed(2)}%</span>
+                  </div>
+                )}
+                {calculatedMetrics.quoteToSale !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Quote → Sale:</span>
+                    <span className="font-medium">{calculatedMetrics.quoteToSale.toFixed(2)}%</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <Button onClick={() => setStep(2)} className="w-full h-12 text-base">
             Select Columns to Display
@@ -197,6 +308,49 @@ const KPISelector = ({ columns, data, onComplete }: KPISelectorProps) => {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
                 {numericColumns.map((col) => (
+                  <label
+                    key={col.name}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      selectedColumns.includes(col.name)
+                        ? 'border-primary bg-accent'
+                        : 'border-border hover:border-primary/50'
+                    }`}
+                  >
+                    <Checkbox
+                      checked={selectedColumns.includes(col.name)}
+                      onCheckedChange={() => handleColumnToggle(col.name)}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{col.label}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        Sample: {col.sample}
+                      </p>
+                    </div>
+                    {selectedColumns.includes(col.name) && (
+                      <Check className="w-4 h-4 text-primary flex-shrink-0" />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Date Columns */}
+          {dateColumns.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                  Date Columns ({dateColumns.length})
+                </h3>
+                <button
+                  onClick={() => handleSelectAll(dateColumns)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  {dateColumns.every(c => selectedColumns.includes(c.name)) ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {dateColumns.map((col) => (
                   <label
                     key={col.name}
                     className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
