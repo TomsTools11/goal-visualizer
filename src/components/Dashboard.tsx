@@ -254,7 +254,6 @@ const Dashboard = ({ objective, selectedColumns, data, calculatedMetrics }: Dash
 
       return {
         title: formatColumnName(col),
-        subtitle: `By ${nameColumn ? formatColumnName(nameColumn) : 'row'}`,
         data: chartData,
         formatValue: isPercentageColumn(col)
           ? (v: number) => `${v.toFixed(2)}%`
@@ -355,7 +354,6 @@ const Dashboard = ({ objective, selectedColumns, data, calculatedMetrics }: Dash
               <ComparisonChart
                 key={chart.title}
                 title={chart.title}
-                subtitle={chart.subtitle}
                 data={chart.data}
                 formatValue={chart.formatValue}
                 delay={700 + index * 150}
