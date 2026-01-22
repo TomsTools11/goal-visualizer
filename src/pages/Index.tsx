@@ -11,7 +11,7 @@ const Index = () => {
   const [csvData, setCsvData] = useState<any[]>([]);
   const [fileName, setFileName] = useState('');
   const [objective, setObjective] = useState('');
-  const [selectedKPIs, setSelectedKPIs] = useState<string[]>([]);
+  const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
 
   const handleFileUpload = (data: any[], name: string) => {
     setCsvData(data);
@@ -19,9 +19,9 @@ const Index = () => {
     setState('configure');
   };
 
-  const handleKPISelection = (obj: string, kpis: string[]) => {
+  const handleColumnSelection = (obj: string, columns: string[]) => {
     setObjective(obj);
-    setSelectedKPIs(kpis);
+    setSelectedColumns(columns);
     setState('dashboard');
   };
 
@@ -30,13 +30,13 @@ const Index = () => {
     setCsvData([]);
     setFileName('');
     setObjective('');
-    setSelectedKPIs([]);
+    setSelectedColumns([]);
   };
 
   if (state === 'dashboard') {
     return (
       <div>
-        <Dashboard objective={objective} selectedKPIs={selectedKPIs} data={csvData} />
+        <Dashboard objective={objective} selectedColumns={selectedColumns} data={csvData} />
         <div className="fixed bottom-6 right-6">
           <button
             onClick={handleReset}
@@ -53,8 +53,8 @@ const Index = () => {
 
   const handleDemoMode = () => {
     setCsvData([{ demo: true }]);
-    setObjective('Outperforming the Competition');
-    setSelectedKPIs(['cpa', 'lead_to_sale', 'lead_to_quote', 'quote_to_sale']);
+    setObjective('Sample Dashboard');
+    setSelectedColumns(['cpa', 'lead_to_sale', 'lead_to_quote', 'quote_to_sale']);
     setState('dashboard');
   };
 
@@ -129,7 +129,7 @@ const Index = () => {
           )}
 
           {state === 'configure' && (
-            <KPISelector columns={columns} onComplete={handleKPISelection} />
+            <KPISelector columns={columns} data={csvData} onComplete={handleColumnSelection} />
           )}
         </div>
       </main>
